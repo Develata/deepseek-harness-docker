@@ -23,9 +23,11 @@ export function apply(ctx) {
   let stage = 'loader';
   void ctx.loader.await().then(async () => {
     save(await verifySession(ctx, { nonce, cycle, expected, onStage: value => { stage = value; } }));
-  }).catch(() => {
+  }).catch(error => {
     // No upstream errors, serialized tools, paths, logs or credentials escape.
-    try { save({ ok: false, cycle, stage }); } catch {}
+    const codes = new Set(['ERR_ASSERTION', 'ENOENT', 'EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'ETIMEDOUT']);
+    const code = codes.has(error?.code) ? error.code : 'unknown';
+    try { save({ ok: false, cycle, stage, code }); } catch {}
   });
 }
 

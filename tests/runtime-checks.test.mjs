@@ -138,3 +138,54 @@ test('empty /data bind regression: HOME and DSH_HOME are created non-destructive
     assert.equal(readFileSync(join(env.HOME, 'preserve'), 'utf8'), 'existing');
   } finally { rmSync(root, { recursive: true }); }
 });
+
+// Importing helpers must not run the opt-in image self-check or change umask.
+const umaskBeforeDiagnosticImport = process.umask();
+const { safeDiagnostic, commandFacts, parseDiagnostic, emitDiagnostic, DIAGNOSTIC_STAGES } =
+  await import('../scripts/self-check.mjs');
+test('diagnostic helpers are inert on import and drop arbitrary child data', () => {
+  assert.equal(process.umask(), umaskBeforeDiagnosticImport);
+  const secret = 'sensitive-sentinel-not-for-logs';
+  const safe = safeDiagnostic('self', 'rustc-version', { exit: secret, signal: secret,
+    error: secret, stdoutMatch: secret, stderrMatch: true, httpStatus: secret,
+    stdout: secret, stderr: secret, command: secret, path: secret });
+  assert.equal(JSON.stringify(safe).includes(secret), false);
+  assert.deepEqual(safe, { source: 'self', stage: 'rustc-version', exit: null,
+    signal: null, error: 'unknown', stdoutMatch: null, stderrMatch: true, httpStatus: null });
+  for (const source of [secret, '__proto__', ['self'], {}, null]) assert.equal(safeDiagnostic(source, 'rustc-version'), null);
+  assert.equal(safeDiagnostic('self', secret), null);
+});
+test('version diagnostics distinguish stdout and stderr without returning their bytes', () => {
+  const facts = commandFacts({ status: 0, signal: null, stdout: 'unexpected-sensitive-value',
+    stderr: 'expected-version extra-sensitive-value' }, 'expected-version');
+  assert.equal(facts.stdoutMatch, false);
+  assert.equal(facts.stderrMatch, true);
+  assert.equal(JSON.stringify(facts).includes('sensitive'), false);
+  assert.deepEqual(safeDiagnostic('tools', 'rust-build', commandFacts({ status: null,
+    signal: 'SIGKILL', error: { code: 'ETIMEDOUT', message: 'sensitive' } })),
+  { source: 'tools', stage: 'rust-build', exit: null, signal: 'SIGKILL', error: 'ETIMEDOUT',
+    stdoutMatch: null, stderrMatch: null, httpStatus: null });
+});
+test('nested diagnostics are parsed and re-serialized through a closed schema', () => {
+  const secret = 'sensitive-sentinel-not-for-logs';
+  const value = parseDiagnostic('DSH_CHECK ' + JSON.stringify({ source: 'self', stage: 'binstall-version',
+    exit: 127, error: 'ENOENT', stdout: secret, stderr: secret, unexpected: secret }));
+  const output = [];
+  const original = console.error;
+  try { console.error = line => output.push(line); emitDiagnostic(value); }
+  finally { console.error = original; }
+  assert.equal(output.length, 1);
+  assert.equal(output[0].includes(secret), false);
+  assert.deepEqual(parseDiagnostic(output[0]), value);
+  for (const line of [secret, 'DSH_CHECK null', 'DSH_CHECK {',
+    'DSH_CHECK ' + JSON.stringify({ source: secret, stage: 'binstall-version' }),
+    'DSH_CHECK ' + 'x'.repeat(2049)]) assert.equal(parseDiagnostic(line), null);
+});
+test('all explicit tool and backend stages have fixed allowlist entries', () => {
+  for (const [file, source] of [['toolchain-smoke.mjs', 'tools'], ['backend-probe.mjs', 'backend']]) {
+    const contents = readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8');
+    for (const match of contents.matchAll(/\b(?:stage|run)\('([a-z-]+)'/g)) {
+      assert.ok(DIAGNOSTIC_STAGES[source].includes(match[1]), `${file}: ${match[1]}`);
+    }
+  }
+});

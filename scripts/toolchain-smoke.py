@@ -18,6 +18,77 @@ CASE = 'setup'
 PHASE = 'initialize'
 SESSION_STAGES = {'loader', 'create', 'agent', 'rename', 'title', 'tools', 'flush'}
 
+# Treat diagnostics from every child as untrusted. Emit only this closed schema.
+DIAGNOSTIC_STAGES = {
+    'backend': set((
+        'anonymous-api anonymous-root authenticated-root cookie html interface invalid-token '
+        'redirect token-exchange token-input'
+    ).split()),
+    'self': set((
+        'binstall-version bun-version cargo-version clean-all-version clippy-version '
+        'codegraph-launcher codegraph-version dsh-executable immutable-tools lock-read node-version '
+        'preflight python-version rustc-version rustfmt-version rustup-version sccache-version'
+    ).split()),
+    'session': set((
+        'agent create flush loader rename title tools'
+    ).split()),
+    'snapshot': set((
+        'cargo-config cargo-marker global-patch no-index profile-manifest profile-patch'
+    ).split()),
+    'tools': set((
+        'binstall-version bun-version cargo-persistence cargo-version clean-all-version '
+        'clippy-version codegraph-launcher codegraph-node codegraph-path codegraph-version identity '
+        'lock-read mcp-initialize mcp-no-index mcp-shutdown mcp-spawn mcp-tools node-version '
+        'persistence-read persistence-write python-venv python-version rust-build rust-build-sccache '
+        'rust-execute rust-fixture rust-layout rustc-version rustfmt-version rustup-active '
+        'rustup-version sccache-stats sccache-stop sccache-version self-check'
+    ).split()),
+}
+ERROR_CODES = {'ERR_ASSERTION', 'ENOENT', 'EACCES', 'EPERM', 'EROFS', 'ENOSPC',
+               'ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ENOBUFS', 'protocol', 'unknown'}
+SIGNALS = {'SIGTERM', 'SIGKILL', 'SIGABRT', 'SIGSEGV', 'SIGILL', 'SIGBUS', 'SIGINT'}
+
+def safe_diagnostic(value):
+    if not isinstance(value, dict):
+        return None
+    source, stage = value.get('source'), value.get('stage')
+    if not isinstance(source, str) or not isinstance(stage, str) or stage not in DIAGNOSTIC_STAGES.get(source, set()):
+        return None
+    def integer(key, low, high):
+        item = value.get(key)
+        return item if type(item) is int and low <= item <= high else None
+    def choice(key, allowed):
+        item = value.get(key)
+        return item if isinstance(item, str) and item in allowed else None
+    return {'source': source, 'stage': stage, 'exit': integer('exit', -128, 255),
+            'signal': choice('signal', SIGNALS), 'error': choice('error', ERROR_CODES),
+            'stdoutMatch': value.get('stdoutMatch') if type(value.get('stdoutMatch')) is bool else None,
+            'stderrMatch': value.get('stderrMatch') if type(value.get('stderrMatch')) is bool else None,
+            'httpStatus': integer('httpStatus', 100, 599)}
+
+def read_diagnostics(output, source=None):
+    records = []
+    if not isinstance(output, str):
+        return records
+    for line in output.splitlines():
+        if not line.startswith('DSH_CHECK ') or len(line) > 2048:
+            continue
+        try:
+            value = safe_diagnostic(json.loads(line[10:]))
+        except (ValueError, TypeError, RecursionError):
+            continue
+        if value and (source is None or value['source'] == source) and value not in records:
+            records.append(value)
+        if len(records) >= 16:
+            break
+    return records
+
+def emit_diagnostics(records):
+    for value in records:
+        safe = safe_diagnostic(value)
+        if safe:
+            print('DSH_CHECK ' + json.dumps(safe, separators=(',', ':')), file=sys.stderr)
+
 
 class SmokeFailure(Exception):
     def __init__(self, code):
@@ -61,22 +132,51 @@ def diagnose_container(name):
 
 
 def command(args, **kwargs):
-    return subprocess.run(args, check=True, capture_output=True, text=True, timeout=180, **kwargs)
+    try:
+        return subprocess.run(args, check=True, capture_output=True, text=True, timeout=180, **kwargs)
+    except subprocess.CalledProcessError as error:
+        emit_diagnostics(read_diagnostics(error.stderr))
+        raise
 
 
 def snapshot_config(image, common, require_marker=False):
     # The CI host may be UID1001 while runtime homes correctly stay 0700/UID1000.
     # Read only these synthetic files through UID1000; never relax host modes.
-    code = ('import hashlib,json; from pathlib import Path; '
-            'files=["/data/dsh/cordis.patch.yml","/data/dsh/profiles/web/cordis.patch.yml",'
-            '"/data/dsh/profiles/web/package.json","/data/home/.cargo/config.toml"]; '
-            'print(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files})); ')
-    if require_marker:
-        code += ('assert Path("/data/home/.cargo/bin/cargo-persistence-probe").is_file(); '
-                 'assert not Path("/workspace/.codegraph").exists()')
+    code = """import errno, hashlib, json, sys
+from pathlib import Path
+files = {'global-patch': '/data/dsh/cordis.patch.yml',
+         'profile-patch': '/data/dsh/profiles/web/cordis.patch.yml',
+         'profile-manifest': '/data/dsh/profiles/web/package.json',
+         'cargo-config': '/data/home/.cargo/config.toml'}
+result = {}
+try:
+    for stage, path in files.items():
+        result[path] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    if REQUIRE_MARKER:
+        stage = 'cargo-marker'
+        assert Path('/data/home/.cargo/bin/cargo-persistence-probe').is_file()
+        stage = 'no-index'
+        assert not Path('/workspace/.codegraph').exists()
+    print(json.dumps(result))
+except Exception as error:
+    code = 'ERR_ASSERTION' if isinstance(error, AssertionError) else errno.errorcode.get(getattr(error, 'errno', None), 'unknown')
+    print('DSH_CHECK ' + json.dumps({'source': 'snapshot', 'stage': stage, 'error': code}), file=sys.stderr)
+    sys.exit(1)
+""".replace('REQUIRE_MARKER', repr(require_marker))
     result = command(['docker', 'run', '--rm', '--network', 'none', *common,
                       '--entrypoint', 'python3', image, '-c', code])
     return json.loads(result.stdout)
+
+
+def verify_snapshot(actual, expected):
+    labels = {'/data/dsh/cordis.patch.yml': 'global-patch',
+              '/data/dsh/profiles/web/cordis.patch.yml': 'profile-patch',
+              '/data/dsh/profiles/web/package.json': 'profile-manifest',
+              '/data/home/.cargo/config.toml': 'cargo-config'}
+    for path, stage in labels.items():
+        if actual.get(path) != expected.get(path):
+            emit_diagnostics([{'source': 'snapshot', 'stage': stage, 'error': 'ERR_ASSERTION'}])
+    assert actual == expected, 'Existing config changed'
 
 
 def remove_container(name):
@@ -85,18 +185,24 @@ def remove_container(name):
 
 def wait_for_backend(name):
     deadline = time.monotonic() + 150
+    last_diagnostics = []
+    token_seen = False
     while time.monotonic() < deadline:
         logs = command(['docker', 'logs', name])
         match = re.search(r'http://127\.0\.0\.1:3080/\?token=([A-Za-z0-9_-]+)', logs.stdout + logs.stderr)
         if match:
+            token_seen = True
             probe = subprocess.run(['docker', 'exec', '-i', name, 'node', '/opt/test/backend-probe.mjs'],
                                    input=match[1], capture_output=True, text=True, timeout=40)
             if probe.returncode == 0:
                 return
+            last_diagnostics = read_diagnostics(probe.stderr, 'backend')
         state = command(['docker', 'inspect', '--format', '{{.State.Running}}', name])
         if state.stdout.strip() != 'true':
             break
         time.sleep(2)
+    emit_diagnostics(last_diagnostics)
+    print('Backend readiness: token-seen=' + str(token_seen).lower(), file=sys.stderr)
     raise SmokeFailure('backend-unready')
 
 
@@ -109,6 +215,7 @@ def wait_for_session(name, nonce, cycle, enabled):
             report = json.loads(result.stdout)
             if report.get('ok') is False:
                 stage = report.get('stage')
+                emit_diagnostics([{'source': 'session', 'stage': stage, 'error': report.get('code')}])
                 raise SmokeFailure('session-' + stage if stage in SESSION_STAGES else 'session-report')
             assert report == {'ok': True, 'cycle': str(cycle), 'mcpEnabled': enabled,
                               'sessionResumed': cycle == 2}, 'DSH session integration failed'
@@ -179,14 +286,14 @@ def run_fixture(image, root, hardened):
                 remove_container(tool_name)
             run_dsh(image, common, network, nonce, cycle, True)
             phase('config-snapshot')
-            assert snapshot_config(image, common, require_marker=True) == before, 'Existing config changed'
+            verify_snapshot(snapshot_config(image, common, require_marker=True), before)
             print(f'Cycle {cycle}: real Web session sees CodeGraph; native auth and persistent data verified.')
         # A real negative control: same image, default overlay disabled. Its
         # Web session must NOT inherit any mcp__codegraph__ tools.
         CASE = 'disabled-control'
         run_dsh(image, common, network, uuid.uuid4().hex, 1, False)
         phase('config-snapshot')
-        assert snapshot_config(image, common, require_marker=True) == before, 'Disabled startup changed config'
+        verify_snapshot(snapshot_config(image, common, require_marker=True), before)
     finally:
         subprocess.run(['docker', 'network', 'rm', network], capture_output=True, check=False)
 
