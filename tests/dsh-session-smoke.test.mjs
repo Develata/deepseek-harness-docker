@@ -46,3 +46,10 @@ test('a running agent or unsuccessful durability checkpoint fails the test', asy
   const unflushed = fixture(); unflushed.ctx.sessions.flush = async () => false;
   await assert.rejects(verifySession(unflushed.ctx, options));
 });
+test('observer diagnostics identify a fixed stage without forwarding service errors', async () => {
+  const stages = [];
+  const ctx = fixture().ctx;
+  ctx.sessionTitle.get = () => { throw new Error('sensitive-sentinel-not-for-logs'); };
+  await assert.rejects(verifySession(ctx, { ...options, onStage: value => stages.push(value) }));
+  assert.deepEqual(stages, ['create', 'agent', 'rename', 'title']);
+});

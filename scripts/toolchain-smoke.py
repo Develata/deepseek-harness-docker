@@ -12,6 +12,54 @@ import time
 import uuid
 
 
+# Emit fixed labels and validated scalar state only, never exception text,
+# child output, argv, environment values or native launch credentials.
+CASE = 'setup'
+PHASE = 'initialize'
+SESSION_STAGES = {'loader', 'create', 'agent', 'rename', 'title', 'tools', 'flush'}
+
+
+class SmokeFailure(Exception):
+    def __init__(self, code):
+        allowed = {'backend-unready', 'session-report', 'session-timeout', 'shutdown'}
+        allowed.update('session-' + stage for stage in SESSION_STAGES)
+        self.code = code if code in allowed else 'unknown'
+
+
+def phase(value):
+    global PHASE
+    allowed = {'initialize', 'network-create', 'container-start', 'backend', 'session',
+               'shutdown', 'home-check', 'fixture-seed', 'config-snapshot', 'tools'}
+    PHASE = value if value in allowed else 'unknown'
+
+
+def failure_summary(error):
+    if isinstance(error, SmokeFailure):
+        return error.code
+    if isinstance(error, subprocess.CalledProcessError):
+        return 'command-exit-' + str(int(error.returncode))
+    if isinstance(error, subprocess.TimeoutExpired):
+        return 'command-timeout'
+    if isinstance(error, AssertionError):
+        return 'assertion'
+    return 'unexpected'
+
+
+def diagnose_container(name):
+    # Query before deleting the disposable container. No raw inspect or logs.
+    try:
+        result = command(['docker', 'inspect', '--format',
+                          '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}}', name])
+        match = re.fullmatch(r'(true|false) (-?\d+) (true|false)', result.stdout.strip())
+        if match:
+            print('Container state: running=' + match[1] + '; exit=' + str(int(match[2]))
+                  + '; oom=' + match[3], file=sys.stderr)
+        else:
+            print('Container state unavailable; details suppressed.', file=sys.stderr)
+    except Exception:
+        print('Container state unavailable; details suppressed.', file=sys.stderr)
+
+
 def command(args, **kwargs):
     return subprocess.run(args, check=True, capture_output=True, text=True, timeout=180, **kwargs)
 
@@ -49,7 +97,7 @@ def wait_for_backend(name):
         if state.stdout.strip() != 'true':
             break
         time.sleep(2)
-    raise AssertionError('Native authenticated backend did not become ready')
+    raise SmokeFailure('backend-unready')
 
 
 def wait_for_session(name, nonce, cycle, enabled):
@@ -59,16 +107,20 @@ def wait_for_session(name, nonce, cycle, enabled):
         result = subprocess.run(['docker', 'exec', name, 'cat', path], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             report = json.loads(result.stdout)
+            if report.get('ok') is False:
+                stage = report.get('stage')
+                raise SmokeFailure('session-' + stage if stage in SESSION_STAGES else 'session-report')
             assert report == {'ok': True, 'cycle': str(cycle), 'mcpEnabled': enabled,
                               'sessionResumed': cycle == 2}, 'DSH session integration failed'
             return
         if command(['docker', 'inspect', '--format', '{{.State.Running}}', name]).stdout.strip() != 'true':
             break
         time.sleep(1)
-    raise AssertionError('DSH session integration timed out')
+    raise SmokeFailure('session-timeout')
 
 
 def run_fixture(image, root, hardened):
+    global CASE
     scripts = Path(__file__).resolve().parent
     root.chmod(0o755)
     data, workspace = root / 'data', root / 'workspace'
@@ -86,13 +138,18 @@ def run_fixture(image, root, hardened):
     # /data child. Docker's image-owned /data/home is hidden by this bind.
     assert not any(data.iterdir()), 'Empty-bind regression must start truly empty'
     empty_network = 'dsh-empty-' + uuid.uuid4().hex
+    CASE = 'empty-bind'
+    phase('network-create')
     command(['docker', 'network', 'create', '--internal', empty_network])
     try:
         run_dsh(image, common, empty_network, uuid.uuid4().hex, 1, False)
+        phase('home-check')
         assert (data / 'home').is_dir() and (data / 'dsh').is_dir(), 'Entrypoint did not prepare missing homes'
     finally:
         subprocess.run(['docker', 'network', 'rm', empty_network], capture_output=True, check=False)
     print('Empty bind: real entrypoint created missing HOME/DSH_HOME as UID1000.')
+    CASE = 'seed'
+    phase('fixture-seed')
     setup = ('from pathlib import Path; '
              'p=Path("/data/dsh"); p.mkdir(parents=True,exist_ok=True); '
              '(p/"cordis.patch.yml").write_text("# preserve smoke fixture\\n[]\\n"); '
@@ -100,14 +157,18 @@ def run_fixture(image, root, hardened):
              '(p/"config.toml").write_text("# preserve smoke fixture\\n[net]\\noffline = true\\n")')
     command(['docker', 'run', '--rm', '--network', 'none', *common,
              '--entrypoint', 'python3', image, '-c', setup])
+    phase('config-snapshot')
     before = snapshot_config(image, common)
     # An internal bridge supplies DSH's required concrete IPv4 without internet
     # egress. No port is published. docker exec probes the native HTTP listener.
     network = 'dsh-smoke-' + uuid.uuid4().hex
+    phase('network-create')
     command(['docker', 'network', 'create', '--internal', network])
     nonce = uuid.uuid4().hex
     try:
         for cycle in (1, 2):
+            CASE = 'enabled-cycle-1' if cycle == 1 else 'enabled-cycle-2'
+            phase('tools')
             tool_name = 'dsh-tools-' + uuid.uuid4().hex
             try:
                 output = command(['docker', 'run', '--rm', '--name', tool_name, '--network', 'none', *common,
@@ -117,11 +178,14 @@ def run_fixture(image, root, hardened):
             finally:
                 remove_container(tool_name)
             run_dsh(image, common, network, nonce, cycle, True)
+            phase('config-snapshot')
             assert snapshot_config(image, common, require_marker=True) == before, 'Existing config changed'
             print(f'Cycle {cycle}: real Web session sees CodeGraph; native auth and persistent data verified.')
         # A real negative control: same image, default overlay disabled. Its
         # Web session must NOT inherit any mcp__codegraph__ tools.
+        CASE = 'disabled-control'
         run_dsh(image, common, network, uuid.uuid4().hex, 1, False)
+        phase('config-snapshot')
         assert snapshot_config(image, common, require_marker=True) == before, 'Disabled startup changed config'
     finally:
         subprocess.run(['docker', 'network', 'rm', network], capture_output=True, check=False)
@@ -130,15 +194,23 @@ def run_fixture(image, root, hardened):
 def run_dsh(image, common, network, nonce, cycle, enabled):
     name = 'dsh-session-' + uuid.uuid4().hex
     try:
+        phase('container-start')
         command(['docker', 'run', '-d', '--name', name, '--network', network, *common,
                  '-e', f'DSH_CODEGRAPH_MCP={int(enabled)}', '-e', f'DSH_SMOKE_MCP={int(enabled)}',
                  '-e', f'DSH_SMOKE_NONCE={nonce}', '-e', f'DSH_SMOKE_CYCLE={cycle}',
                  image, '--patch', '/opt/test/dsh-session-smoke.cordis.yml'])
+        phase('backend')
         wait_for_backend(name)
+        phase('session')
         wait_for_session(name, nonce, cycle, enabled)
+        phase('shutdown')
         command(['docker', 'stop', '--time', '30', name])
         state = command(['docker', 'inspect', '--format', '{{.State.ExitCode}}', name])
-        assert state.stdout.strip() == '0', 'DSH did not stop gracefully'
+        if state.stdout.strip() != '0':
+            raise SmokeFailure('shutdown')
+    except Exception:
+        diagnose_container(name)
+        raise
     finally:
         remove_container(name)
 
@@ -157,6 +229,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except Exception:
-        print('Toolchain/DSH-session smoke failed; child output and container logs suppressed.', file=sys.stderr)
+    except Exception as error:
+        print(f'Toolchain/DSH-session smoke failed: case={CASE}; phase={PHASE}; code={failure_summary(error)}. '
+              'Child output and container logs suppressed.', file=sys.stderr)
         sys.exit(1)
