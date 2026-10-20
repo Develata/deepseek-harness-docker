@@ -69,18 +69,18 @@ DeepSeek Harness is MIT licensed, Copyright (c) 2026 DeepSeek. Its notice is inc
 
 .github/workflows/image.yml is a proposal requiring repository-publication and workflow-run approval. It has no push/PR/scheduled trigger. A manual run builds linux/amd64, starts a disposable native Web UI, checks anonymous and invalid-token rejection plus native token-to-cookie exchange and authenticated HTML, then removes its runtime volumes. It makes no model calls and never prints or uploads native credentials/container logs. The image tar is retained as an Actions artifact for one day, without runtime data. This workflow and smoke script have not run.
 
-The publish input defaults to false. Only an explicit true on the default branch enables the separate packages:write job, using the built-in GITHUB_TOKEN rather than a new credential. It pushes exactly the tested image to ghcr.io/<owner>/<repository>:0.2.1-rc.2-<full-commit-sha>. If the proposed repository is Develata/deepseek-harness-docker, the image path becomes ghcr.io/develata/deepseek-harness-docker. There is no latest tag, ARM64 claim, automatic deployment or gateway configuration. GitHub Actions/storage quotas and package visibility must be reviewed before running/publishing.
+The publish input defaults to false. Only an explicit true on the default branch enables the separate packages:write job, using the built-in GITHUB_TOKEN rather than a new credential. It pushes exactly the tested image to ghcr.io/<owner>/<repository>:0.2.1-rc.2-<full-commit-sha>. If the proposed repository is Develata/deepseek-harness-docker, the image path becomes ghcr.io/develata/deepseek-harness-docker. This build workflow does not update latest. There is no ARM64 claim, automatic deployment or gateway configuration. GitHub Actions/storage quotas and package visibility must be reviewed before running/publishing.
 
 ## Docker Compose templates
 
-Use the fixed image tag reported by a successful workflow run. Set DSH_IMAGE in a local .env, for example ghcr.io/develata/deepseek-harness-docker:0.2.1-rc.2-<full-commit-sha>. Replace the placeholder with an actually published tag; do not use latest. These templates do not install or configure a gateway, TLS or external login.
+These templates default to ghcr.io/develata/deepseek-harness-docker:latest. The latest tag is mutable; set DSH_IMAGE in a local .env to an existing fixed version tag or image digest if you want to pin a version. These templates do not install or configure a gateway, TLS or external login.
 
 ### Existing reverse proxy runs on the Docker host
 
 ```yaml
 services:
   dsh:
-    image: ${DSH_IMAGE:?Set the published fixed image tag}
+    image: ${DSH_IMAGE:-ghcr.io/develata/deepseek-harness-docker:latest}
     init: true
     restart: unless-stopped
     cap_drop: [ALL]
@@ -105,7 +105,7 @@ Your host proxy can reach http://127.0.0.1:3080. Change the advertised URL and t
 ```yaml
 services:
   dsh:
-    image: ${DSH_IMAGE:?Set the published fixed image tag}
+    image: ${DSH_IMAGE:-ghcr.io/develata/deepseek-harness-docker:latest}
     init: true
     restart: unless-stopped
     cap_drop: [ALL]
