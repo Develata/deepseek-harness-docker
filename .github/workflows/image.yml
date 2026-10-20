@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the tested AMD64 image to this repository's GHCR package
+        description: Publish the tested AMD64 image as a fixed commit tag and latest
         type: boolean
         default: false
         required: true
@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Test empty-bind home preparation
+        run: node --test tests/prepare-homes.test.mjs
       - name: Build AMD64 image
         run: docker build --platform linux/amd64 -t dsh-tested:local .
       - name: Start isolated native Web UI
@@ -52,14 +54,24 @@ jobs:
           name: dsh-amd64-image
       - name: Load the tested image
         run: gzip -dc dsh-amd64.tar.gz | docker load
-      - name: Publish commit-specific tag without latest
+      - name: Publish fixed tag and latest for the same tested image
+        shell: bash
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -eu
-          image="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]'):0.2.1-rc.2-${GITHUB_SHA}"
+          set -euo pipefail
+          repository="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          image="$repository:0.2.1-rc.2-${GITHUB_SHA}"
+          latest="$repository:latest"
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          # Both tags reference the exact image loaded from the successful build
+          # artifact. Never rebuild in this job or alias a historical digest.
           docker tag dsh-tested:local "$image"
           docker push "$image"
-          printf 'Published tested AMD64 image: %s\n' "$image" >> "$GITHUB_STEP_SUMMARY"
+          fixed_digest="$(docker buildx imagetools inspect "$image" --format '{{json .Manifest}}' | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
+          docker tag dsh-tested:local "$latest"
+          docker push "$latest"
+          latest_digest="$(docker buildx imagetools inspect "$latest" --format '{{json .Manifest}}' | jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))')"
+          test "$fixed_digest" = "$latest_digest"
+          printf 'Published tested AMD64 image: %s\nLatest: %s\nVerified identical digest: %s\n' "$image" "$latest" "$fixed_digest" >> "$GITHUB_STEP_SUMMARY"

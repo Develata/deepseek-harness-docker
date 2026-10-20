@@ -9,7 +9,7 @@ RUN apt-get update \
 ENV DSH_HOME=/data/dsh HOME=/data/home
 RUN mkdir -p /data/dsh /data/home /workspace \
  && chown -R node:node /data /workspace
-COPY --chown=root:root scripts/entrypoint.mjs /opt/dsh-wrapper/entrypoint.mjs
+COPY --chown=root:root scripts/entrypoint.mjs scripts/prepare-homes.mjs /opt/dsh-wrapper/
 COPY --chown=root:root licenses/ /opt/dsh-wrapper/licenses/
 USER node
 WORKDIR /workspace

@@ -1,7 +1,9 @@
 // DSH rejects wildcard bind addresses. Bind one concrete container interface.
 import { networkInterfaces } from 'node:os';
 import { spawn } from 'node:child_process';
+import { prepareHomes } from './prepare-homes.mjs';
 process.umask(0o077);
+prepareHomes();
 const addresses = [...new Set(Object.values(networkInterfaces()).flat()
   .filter(row => row && row.family === 'IPv4' && !row.internal)
   .map(row => row.address))];

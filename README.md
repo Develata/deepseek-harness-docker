@@ -44,6 +44,8 @@ DSH prints its native authenticated launch URL. That URL contains a bearer crede
 
 /data/dsh stores DSH profiles/application data; /data/home stores the process home; /workspace stores work files. The process uses the unprivileged node user (UID 1000). Named volumes inherit the image's directory ownership on first creation; existing bind mounts require suitable ownership and permissions.
 
+On startup, missing HOME (/data/home) and DSH_HOME (/data/dsh) directories are created as the current runtime user with mode 0700. Existing directories, ownership, modes and config files are not modified. This also handles an empty /data bind mount, which hides image-created directories. If creation fails, make the dedicated host directory writable by UID 1000; the image never performs a root chmod/chown repair.
+
 Stop before making a consistent encrypted backup of both volumes. Do not delete volumes casually. No automatic upgrade or migration is provided. Test newer versions with backup copies before switching an existing instance.
 
 Docker --init reaps descendants. The wrapper forwards termination and gives DSH up to 20 seconds before a forced stop; use a container stop timeout above 20 seconds, for example:
