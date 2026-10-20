@@ -51,6 +51,22 @@ export function parseStartup(args, env = process.env, interfaces = networkInterf
   return { host, mcpEnabled: enabled === '1', port: Number(values.get('--port') ?? 3080) };
 }
 
+export function buildDshArgs(args, startup) {
+  // DSH stops parsing launcher flags at the first Web/app flag. Keep every
+  // --patch before --no-open; otherwise Web rejects it as an unknown option.
+  // Image overlay first, user overlays after it, without rewriting any files.
+  const patches = startup.mcpEnabled ? ['--patch', '/opt/dsh-wrapper/codegraph.cordis.yml'] : [];
+  const appArgs = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--') { appArgs.push(...args.slice(i)); break; }
+    if (args[i] === '--patch') patches.push(args[i], args[++i]);
+    else if (args[i].startsWith('--patch=')) patches.push(args[i]);
+    else appArgs.push(args[i]);
+  }
+  return ['web', ...patches, '--no-open', '--host', startup.host, '--port', '3080',
+    '--public-url', 'http://127.0.0.1:3080/', ...appArgs];
+}
+
 export function probeDirectory(label, path, { create = true } = {}) {
   if (typeof path !== 'string' || !isAbsolute(path)) fail(`${label} must be an absolute directory path.`);
   let probe;

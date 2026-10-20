@@ -3,12 +3,42 @@ import { test } from 'node:test';
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseStartup, probeDirectory, checkWritableDirectories, checkRuntimeIdentity, checkExecutable } from '../scripts/runtime-checks.mjs';
+import { buildDshArgs, parseStartup, probeDirectory, checkWritableDirectories, checkRuntimeIdentity, checkExecutable } from '../scripts/runtime-checks.mjs';
 
 const interfaces = { lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
   eth0: [{ family: 'IPv4', internal: false, address: '172.18.0.2' }] };
 const parse = (args = [], env = {}) => parseStartup(args, env, interfaces);
 const fixture = () => mkdtempSync(join(tmpdir(), 'dsh-unit-'));
+
+const webDefaults = ['--no-open', '--host', '172.18.0.2', '--port', '3080',
+  '--public-url', 'http://127.0.0.1:3080/'];
+test('image MCP patch precedes the first Web argument', () => {
+  assert.deepEqual(buildDshArgs([], parse()),
+    ['web', '--patch', '/opt/dsh-wrapper/codegraph.cordis.yml', ...webDefaults]);
+});
+test('empty-bind test patch remains a launcher flag with MCP disabled', () => {
+  const args = ['--patch', '/opt/test/dsh-session-smoke.cordis.yml'];
+  assert.deepEqual(buildDshArgs(args, parse(args, { DSH_CODEGRAPH_MCP: '0' })),
+    ['web', ...args, ...webDefaults]);
+});
+test('repeated split/equal user patches follow the image patch in original order', () => {
+  const args = ['--port', '4321', '--patch', '/user/first.yml', '--trusted-host', 'example.com',
+    '--patch=/user/second.yml', '--future-web-flag', 'value'];
+  const original = [...args];
+  assert.deepEqual(buildDshArgs(args, parse(args)),
+    ['web', '--patch', '/opt/dsh-wrapper/codegraph.cordis.yml', '--patch', '/user/first.yml',
+      '--patch=/user/second.yml', ...webDefaults, '--port', '4321',
+      '--trusted-host', 'example.com', '--future-web-flag', 'value']);
+  assert.deepEqual(args, original);
+});
+test('explicit end-of-options and subsequent literal tokens are not rearranged', () => {
+  const args = ['--patch=/user/first.yml', '--', '--patch', 'literal.yml'];
+  assert.deepEqual(buildDshArgs(args, parse(args, { DSH_CODEGRAPH_MCP: '0' })),
+    ['web', '--patch=/user/first.yml', ...webDefaults, '--', '--patch', 'literal.yml']);
+});
+test('disabled MCP without user patches preserves the existing Web defaults', () => {
+  assert.deepEqual(buildDshArgs([], parse([], { DSH_CODEGRAPH_MCP: '0' })), ['web', ...webDefaults]);
+});
 
 test('defaults preserve MCP and fixed runtime port without mutating argv', () => {
   const args = ['--patch', '/user/config.yml', '--unknown', 'value'];

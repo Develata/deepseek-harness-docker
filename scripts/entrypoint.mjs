@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { checkExecutable, checkRuntimeIdentity, checkWritableDirectories, parseStartup, PreflightError } from './runtime-checks.mjs';
+import { buildDshArgs, checkExecutable, checkRuntimeIdentity, checkWritableDirectories, parseStartup, PreflightError } from './runtime-checks.mjs';
 
 process.umask(0o077);
 try {
@@ -9,10 +9,7 @@ try {
   checkWritableDirectories();
   checkExecutable('dsh');
   if (startup.mcpEnabled) checkExecutable('/opt/bun-global-bin/codegraph');
-  // Image-owned overlay only: never rewrite user config or credentials.
-  const imagePatches = startup.mcpEnabled ? ['--patch', '/opt/dsh-wrapper/codegraph.cordis.yml'] : [];
-  const child = spawn('dsh', ['web', '--no-open', '--host', startup.host, '--port', '3080',
-    '--public-url', 'http://127.0.0.1:3080/', ...imagePatches, ...args], { stdio: 'inherit' });
+  const child = spawn('dsh', buildDshArgs(args, startup), { stdio: 'inherit' });
   let timer;
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
     child.kill('SIGTERM');
