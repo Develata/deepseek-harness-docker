@@ -1,0 +1,7 @@
+# Opt-in override, NOT the default. Runtime compatibility is still unverified.
+# docker compose -f compose.yml -f compose.hardened.yml config
+services:
+  dsh:
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,mode=1777

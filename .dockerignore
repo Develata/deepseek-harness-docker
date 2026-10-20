@@ -1,6 +1,13 @@
 **
 !Dockerfile
 !scripts/
+scripts/**
 !scripts/entrypoint.mjs
+!scripts/prepare-homes.mjs
+!scripts/runtime-checks.mjs
+!scripts/self-check.mjs
+!scripts/install-toolchains.py
+!scripts/toolchains.lock.json
+!scripts/codegraph.cordis.yml
 !licenses/
 !licenses/**

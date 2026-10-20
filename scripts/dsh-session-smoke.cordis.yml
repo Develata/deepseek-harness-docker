@@ -1,0 +1,4 @@
+# Test-only instrumentation; this does NOT install/replace the image MCP entry.
+- insert:
+    - id: image-session-smoke
+      name: /opt/test/dsh-session-smoke.mjs

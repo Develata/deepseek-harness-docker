@@ -1,0 +1,24 @@
+# Select an approved built image of THIS revision. No default mutable latest.
+services:
+  dsh:
+    image: ${DSH_IMAGE:?Set DSH_IMAGE to an approved image tag or digest}
+    platform: linux/amd64
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:3080:3080"
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./workspace
+        target: /workspace
+        bind:
+          create_host_path: false

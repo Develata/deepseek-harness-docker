@@ -1,0 +1,14 @@
+# Image-owned overlay; never copied over a persistent user patch file.
+# Package installation does not initialize/index projects or change agent permissions.
+- insert:
+    - id: image-codegraph-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: codegraph
+        transport: stdio
+        command: /opt/bun-global-bin/codegraph
+        args: !!js "['serve', '--mcp', '--path', process.cwd()]"
+        cwd: !!js process.cwd()
+        env:
+          CODEGRAPH_TELEMETRY: '0'
+          CODEGRAPH_NO_DOWNLOAD: '1'
