@@ -89,16 +89,13 @@ services:
     ports:
       - "127.0.0.1:3080:3080"
     volumes:
-      - dsh-data:/data
-      - dsh-workspace:/workspace
+      - ./data:/data
+      - ./workspace:/workspace
     command:
       - --public-url
       - https://dsh.example.com/
       - --trusted-host
       - dsh.example.com
-volumes:
-  dsh-data:
-  dsh-workspace:
 ```
 
 Your host proxy can reach http://127.0.0.1:3080. Change the advertised URL and trusted host together if you use another domain. The bare trusted host follows upstream documentation and accepts that hostname on any port; do not append :443 blindly because a normal HTTPS browser Host header can omit the port on the plain HTTP backend hop. For local-only use without a proxy, omit command; the default advertised URL is http://127.0.0.1:3080/.
@@ -115,8 +112,8 @@ services:
     security_opt: [no-new-privileges:true]
     stop_grace_period: 30s
     volumes:
-      - dsh-data:/data
-      - dsh-workspace:/workspace
+      - ./data:/data
+      - ./workspace:/workspace
     networks:
       - proxy-network
     command:
@@ -124,9 +121,6 @@ services:
       - https://dsh.example.com/
       - --trusted-host
       - dsh.example.com
-volumes:
-  dsh-data:
-  dsh-workspace:
 networks:
   proxy-network:
     external: true
@@ -141,4 +135,4 @@ Official DSH rejects wildcard bind addresses such as 0.0.0.0. The image binds th
 
 --public-url advertises the browser-facing address; it does not grant trust or provide authentication. --trusted-host admits the public Host authority. Your proxy must preserve the browser-facing Host and Origin, forward WebSocket upgrades, support streaming, and add Secure to native cookies when terminating HTTPS. Native launch-token/cookie authentication remains enabled; external login does not replace it. Native process-token URLs and logs are sensitive. Model-provider account login or its localhost OAuth callback is a separate concern and is not configured by these templates.
 
-/data persists DSH state/home; /workspace persists work files. Named volumes are preferred. Existing bind mounts must be writable by UID 1000. Back up both volumes before upgrades; do not use docker compose down -v unless intentionally deleting them. Start with docker compose up -d only after you have selected the actual published image and configured your own external protection. These examples are documentation, not a deployment performed on your server.
+/data persists DSH state/home in ./data; /workspace persists work files in ./workspace. These host directories are relative to the Compose file's directory; create them before startup and make them writable by UID 1000. Data in existing named volumes is not migrated automatically: if you already have data, stop the old container and migrate it before starting with these directories, rather than starting with empty replacements. Back up both directories before upgrades. Start with docker compose up -d only after you have selected the actual published image and configured your own external protection. These examples are documentation, not a deployment performed on your server.
