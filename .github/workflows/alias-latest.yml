@@ -1,0 +1,34 @@
+name: Alias verified DSH image as latest
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  alias:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      packages: write
+    steps:
+      - name: Publish latest alias without rebuilding
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE: ghcr.io/develata/deepseek-harness-docker
+          DIGEST: sha256:38bce61913392e3eff0cb088b316c41c96733918b3c24f064c0bbb687f5e47e3
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$(mktemp -d)"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Manifest}}' > "$DOCKER_CONFIG/source.json"
+          test "$(jq -r '.digest' "$DOCKER_CONFIG/source.json")" = "$DIGEST"
+          jq -e '[.manifests[].platform | select(.os != "unknown")] == [{"architecture":"amd64","os":"linux"}]' "$DOCKER_CONFIG/source.json"
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$DIGEST"
+          docker buildx imagetools inspect "$IMAGE:latest" --format '{{json .Manifest}}' > "$DOCKER_CONFIG/latest.json"
+          test "$(jq -r '.digest' "$DOCKER_CONFIG/latest.json")" = "$DIGEST"
+          jq -S '.manifests' "$DOCKER_CONFIG/source.json" > "$DOCKER_CONFIG/source-platforms.json"
+          jq -S '.manifests' "$DOCKER_CONFIG/latest.json" > "$DOCKER_CONFIG/latest-platforms.json"
+          cmp "$DOCKER_CONFIG/source-platforms.json" "$DOCKER_CONFIG/latest-platforms.json"
+          docker buildx imagetools inspect "$IMAGE:latest"
