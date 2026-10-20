@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!scripts/
+!scripts/entrypoint.mjs
+!licenses/
+!licenses/**
