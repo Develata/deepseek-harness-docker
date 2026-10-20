@@ -70,3 +70,75 @@ DeepSeek Harness is MIT licensed, Copyright (c) 2026 DeepSeek. Its notice is inc
 .github/workflows/image.yml is a proposal requiring repository-publication and workflow-run approval. It has no push/PR/scheduled trigger. A manual run builds linux/amd64, starts a disposable native Web UI, checks anonymous and invalid-token rejection plus native token-to-cookie exchange and authenticated HTML, then removes its runtime volumes. It makes no model calls and never prints or uploads native credentials/container logs. The image tar is retained as an Actions artifact for one day, without runtime data. This workflow and smoke script have not run.
 
 The publish input defaults to false. Only an explicit true on the default branch enables the separate packages:write job, using the built-in GITHUB_TOKEN rather than a new credential. It pushes exactly the tested image to ghcr.io/<owner>/<repository>:0.2.1-rc.2-<full-commit-sha>. If the proposed repository is Develata/deepseek-harness-docker, the image path becomes ghcr.io/develata/deepseek-harness-docker. There is no latest tag, ARM64 claim, automatic deployment or gateway configuration. GitHub Actions/storage quotas and package visibility must be reviewed before running/publishing.
+
+## Docker Compose templates
+
+Use the fixed image tag reported by a successful workflow run. Set DSH_IMAGE in a local .env, for example ghcr.io/develata/deepseek-harness-docker:0.2.1-rc.2-<full-commit-sha>. Replace the placeholder with an actually published tag; do not use latest. These templates do not install or configure a gateway, TLS or external login.
+
+### Existing reverse proxy runs on the Docker host
+
+```yaml
+services:
+  dsh:
+    image: ${DSH_IMAGE:?Set the published fixed image tag}
+    init: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:3080:3080"
+    volumes:
+      - dsh-data:/data
+      - dsh-workspace:/workspace
+    command:
+      - --public-url
+      - https://dsh.example.com/
+      - --trusted-host
+      - dsh.example.com
+volumes:
+  dsh-data:
+  dsh-workspace:
+```
+
+Your host proxy can reach http://127.0.0.1:3080. Change the advertised URL and trusted host together if you use another domain. The bare trusted host follows upstream documentation and accepts that hostname on any port; do not append :443 blindly because a normal HTTPS browser Host header can omit the port on the plain HTTP backend hop. For local-only use without a proxy, omit command; the default advertised URL is http://127.0.0.1:3080/.
+
+### Existing reverse proxy runs in another container
+
+```yaml
+services:
+  dsh:
+    image: ${DSH_IMAGE:?Set the published fixed image tag}
+    init: true
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    volumes:
+      - dsh-data:/data
+      - dsh-workspace:/workspace
+    networks:
+      - proxy-network
+    command:
+      - --public-url
+      - https://dsh.example.com/
+      - --trusted-host
+      - dsh.example.com
+volumes:
+  dsh-data:
+  dsh-workspace:
+networks:
+  proxy-network:
+    external: true
+    name: ${DSH_PROXY_NETWORK:?Set your existing private proxy network}
+```
+
+There is deliberately no ports section. Your existing proxy must already join the named private Docker bridge network and use http://dsh:3080 as its upstream. A proxy container's 127.0.0.1 is that proxy container, not DSH or the host. Use a network shared only with trusted containers and avoid a conflicting service name/alias dsh. Keep DSH on one IPv4 bridge network: this image selects its current concrete container IPv4 at every startup, so it does not depend on a fixed address. Model access still needs outbound network connectivity.
+
+### Native DSH behavior and persistent data
+
+Official DSH rejects wildcard bind addresses such as 0.0.0.0. The image binds the current concrete container address; the ports mapping separately controls host publication. Do not set the application to container loopback when another container or Docker port forwarding must reach it.
+
+--public-url advertises the browser-facing address; it does not grant trust or provide authentication. --trusted-host admits the public Host authority. Your proxy must preserve the browser-facing Host and Origin, forward WebSocket upgrades, support streaming, and add Secure to native cookies when terminating HTTPS. Native launch-token/cookie authentication remains enabled; external login does not replace it. Native process-token URLs and logs are sensitive. Model-provider account login or its localhost OAuth callback is a separate concern and is not configured by these templates.
+
+/data persists DSH state/home; /workspace persists work files. Named volumes are preferred. Existing bind mounts must be writable by UID 1000. Back up both volumes before upgrades; do not use docker compose down -v unless intentionally deleting them. Start with docker compose up -d only after you have selected the actual published image and configured your own external protection. These examples are documentation, not a deployment performed on your server.
