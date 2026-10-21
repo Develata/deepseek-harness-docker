@@ -3,5 +3,8 @@
 services:
   dsh:
     read_only: true
+    environment:
+      # Load native addons from the immutable image, not the noexec tmpfs.
+      NARB_DISABLE_NATIVE_CACHE: "1"
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777

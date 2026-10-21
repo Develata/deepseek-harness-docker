@@ -6,6 +6,7 @@ import json
 import ast
 from pathlib import Path
 import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -16,6 +17,40 @@ spec.loader.exec_module(smoke)
 
 
 class SmokeDiagnostics(unittest.TestCase):
+    def test_hardened_fixture_disables_native_copy_cache_without_relaxing_tmpfs(self):
+        with tempfile.TemporaryDirectory() as root, \
+             patch.object(smoke, 'command'), patch.object(smoke.subprocess, 'run'), \
+             patch.object(smoke, 'run_dsh', side_effect=RuntimeError('stop before container launch')) as launch:
+            with self.assertRaisesRegex(RuntimeError, 'stop before container launch'):
+                smoke.run_fixture('synthetic-image', Path(root), True)
+        common = launch.call_args.args[1]
+        self.assertIn('--read-only', common)
+        tmpfs = common[common.index('--tmpfs') + 1]
+        self.assertEqual(tmpfs, '/tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777')
+        self.assertEqual(common[common.index('-e') + 1], 'NARB_DISABLE_NATIVE_CACHE=1')
+        self.assertEqual(common[common.index('--user') + 1], '1000:1000')
+        self.assertEqual(common[common.index('--cap-drop') + 1], 'ALL')
+        self.assertEqual(common[common.index('--security-opt') + 1], 'no-new-privileges')
+        compose = (Path(__file__).resolve().parents[1] / 'compose.hardened.yml').read_text()
+        self.assertIn('read_only: true', compose)
+        self.assertIn('NARB_DISABLE_NATIVE_CACHE: "1"', compose)
+        self.assertIn('- ' + tmpfs, compose)
+
+    def test_default_fixture_does_not_change_native_loader_or_mount_policy(self):
+        with tempfile.TemporaryDirectory() as root, \
+             patch.object(smoke, 'command'), patch.object(smoke.subprocess, 'run'), \
+             patch.object(smoke, 'run_dsh', side_effect=RuntimeError('stop before container launch')) as launch:
+            with self.assertRaisesRegex(RuntimeError, 'stop before container launch'):
+                smoke.run_fixture('synthetic-image', Path(root), False)
+        common = launch.call_args.args[1]
+        self.assertNotIn('--read-only', common)
+        self.assertNotIn('--tmpfs', common)
+        self.assertNotIn('NARB_DISABLE_NATIVE_CACHE=1', common)
+        self.assertEqual(common[common.index('--user') + 1], '1000:1000')
+        for file in ['Dockerfile', 'compose.yml', 'scripts/entrypoint.mjs']:
+            self.assertNotIn('NARB_DISABLE_NATIVE_CACHE',
+                             (Path(__file__).resolve().parents[1] / file).read_text())
+
     def test_failure_summary_never_stringifies_errors_or_output(self):
         secret = 'sensitive-sentinel-not-for-logs'
         errors = [

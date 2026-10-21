@@ -240,7 +240,10 @@ def run_fixture(image, root, hardened):
     common = ['--init', '--user', '1000:1000', '--cap-drop', 'ALL',
               '--security-opt', 'no-new-privileges', *mounts]
     if hardened:
-        common += ['--read-only', '--tmpfs', '/tmp:rw,nosuid,nodev,size=512m,mode=1777']
+        # The upstream native loader otherwise copies .node files into noexec /tmp.
+        # Load the original image files instead; do not grant tmpfs executable mappings.
+        common += ['--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777',
+                   '-e', 'NARB_DISABLE_NATIVE_CACHE=1']
     # Reproduce the published image's empty-bind failure before seeding ANY
     # /data child. Docker's image-owned /data/home is hidden by this bind.
     assert not any(data.iterdir()), 'Empty-bind regression must start truly empty'

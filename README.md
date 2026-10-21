@@ -16,7 +16,7 @@ Top-level versions are fixed; the base image tag, Debian packages and npm transi
 
 ## Development toolchain draft
 
-This revision adds pinned Rust stable, rustup, cargo-binstall, sccache, cargo-clean-all, Bun, and CodeGraph. Python3 was already present; python3-venv is added. Node is the latest Current release at preparation, not LTS. See [TOOLCHAIN-REVIEW.md](TOOLCHAIN-REVIEW.md) for pins, supply-chain limitations, persistence, and required runtime tests. The new image has NOT been built or runtime-tested. Proposed manual CI now checks truly empty bind startup, tools, native HTTP authentication, actual Web-session CodeGraph registration, same-session persistence after container recreation, and an MCP-disabled negative control. It repeats under the optional read-only-rootfs override. These runtime checks have not run.
+This revision adds pinned Rust stable, rustup, cargo-binstall, sccache, cargo-clean-all, Bun, and CodeGraph. Python3 was already present; python3-venv is added. Node is the latest Current release at preparation, not LTS. See [TOOLCHAIN-REVIEW.md](TOOLCHAIN-REVIEW.md) for pins, supply-chain limitations, persistence, and required runtime tests. The toolchain image built successfully and its ordinary runtime suite passed in [CI run 39556949149](https://github.com/Develata/deepseek-harness-docker/actions/runs/39556949149): empty bind startup, non-root tools, native authentication, actual Web-session CodeGraph registration, persistence after container recreation, and an MCP-disabled control. The optional hardened run failed before backend readiness, so publication was skipped and latest remains the HOME hotfix. The native-cache adjustment below still requires a new full CI run.
 
 CodeGraph is installed globally with bun add -g into image-owned /opt paths, with its real global binary on PATH. It uses its bundled Node24 runtime, independently of DSH's system Node26. Its MCP entry is added through an image-owned startup overlay, without changing persistent user patches or credentials. Set DSH_CODEGRAPH_MCP=0 if you already configure CodeGraph or want it disabled. There is no automatic agent installer, project initialization, cleanup, or runtime tool download.
 
@@ -129,12 +129,18 @@ compose.hardened.yml is a separate, opt-in override, not a default security chan
     DSH_IMAGE=your-approved-image docker compose -f compose.yml -f compose.hardened.yml up -d
 
 Review config before running up. No deployment was performed when preparing this
-candidate. The override adds only read_only: true and a writable 512 MiB /tmp tmpfs
-with nosuid,nodev,mode=1777. /data and /workspace stay writable/persistent. /tmp is
+candidate. The override keeps read_only: true and a writable 512 MiB /tmp tmpfs
+with explicit noexec,nosuid,nodev,mode=1777. /data and /workspace stay writable/persistent. /tmp is
 memory-backed and disposable; never store sessions, caches, credentials or work
 there. Its size is a ceiling, not preallocated RAM, and heavy jobs may need a
-reviewed larger limit. No noexec is added: compiler/build-tool temporary execution
-can require it. This is hardening, not isolation from untrusted code.
+reviewed larger limit. Docker already defaults tmpfs to noexec; omitting the word
+did not guarantee execution was allowed. The override now sets
+NARB_DISABLE_NATIVE_CACHE=1 so DSH's native-addon loader uses the original image
+libraries rather than copying them into noexec /tmp. This disables only the addon
+copy cache, not Cargo caches or sccache. Default Compose and image startup do not
+set it. Temporary executables cannot run from /tmp: use a reviewed writable project
+build directory when a tool requires execution. This is hardening, not isolation
+from untrusted code, and hardened runtime compatibility remains unverified.
 
 Python venvs belong in /workspace; user Bun/Cargo installs and caches in /data/home;
 CodeGraph indexes in the project; image binaries and Rust toolchains stay under
@@ -159,7 +165,7 @@ DeepSeek Harness is MIT licensed, Copyright (c) 2026 DeepSeek. Its notice is inc
 
 .github/workflows/image.yml remains manual-only, with no push/PR/scheduled trigger. Its published hotfix version ran successfully in [run 39484093048](https://github.com/Develata/deepseek-harness-docker/actions/runs/39484093048): AMD64 build, HOME tests, native anonymous/invalid-token rejection, token-to-cookie exchange and authenticated HTML. The successful run published the tested hotfix image and updated latest.
 
-This private candidate extends that workflow with non-root tool checks, genuinely empty bind startup, actual DSH session registration, persistence and an MCP-disabled control, repeated with read-only-rootfs plus tmpfs. These added runtime steps have NOT run, and must pass on this candidate before any toolchain release. No model calls are requested; native credentials/container logs are not printed or uploaded. Only the tested image tar, without runtime data, is retained as an Actions artifact for one day.
+The workflow includes non-root tool checks, genuinely empty bind startup, actual DSH session registration, persistence and an MCP-disabled control, repeated with read-only-rootfs plus tmpfs. The ordinary suite passed in run 39556949149; the hardened run failed and the separate final auth gate was skipped. The hardened native-cache adjustment has not been runtime-tested. All gates must pass on the resulting commit before any toolchain release. No model calls are requested; native credentials/container logs are not printed or uploaded. Only the tested image tar, without runtime data, is retained as an Actions artifact for one day.
 
 The publish input defaults to false. Only an explicit true on the default branch enables the separate packages:write job, using the built-in GITHUB_TOKEN rather than a new credential. It pushes exactly the tested image to ghcr.io/<owner>/<repository>:0.2.1-rc.2-<full-commit-sha>. For Develata/deepseek-harness-docker, the image path is ghcr.io/develata/deepseek-harness-docker. After all smoke tests pass, publish=true also updates latest from that exact tested image and verifies that the fixed tag and latest have identical registry digests. There is no ARM64 claim, automatic deployment or gateway configuration. GitHub Actions/storage quotas and package visibility must be reviewed before running/publishing.
 
