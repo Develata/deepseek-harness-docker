@@ -189,3 +189,14 @@ test('all explicit tool and backend stages have fixed allowlist entries', () => 
     }
   }
 });
+
+// cargo-binstall 1.26.0 uses --version for a package version constraint.
+// Its own version is -V; inspect both actual probe declarations without running tools.
+for (const file of ['self-check.mjs', 'toolchain-smoke.mjs']) {
+  test(`${file} queries cargo-binstall itself with -V, not the install selector`, () => {
+    const contents = readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8');
+    const probes = [...contents.matchAll(/'binstall-version',\s*'cargo',\s*(\[[^\]\n]*\])/g)];
+    assert.equal(probes.length, 1, 'Expected exactly one cargo-binstall version probe');
+    assert.deepEqual(JSON.parse(probes[0][1].replaceAll("'", '"')), ['binstall', '-V']);
+  });
+}

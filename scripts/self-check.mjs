@@ -68,7 +68,7 @@ export function selfCheck() {
       ['rustc-version', 'rustc', ['--version'], lock.versions.rust], ['cargo-version', 'cargo', ['--version'], 'cargo '],
       ['rustup-version', 'rustup', ['--version'], lock.versions.rustup], ['rustfmt-version', 'cargo', ['fmt', '--version'], 'rustfmt '],
       ['clippy-version', 'cargo', ['clippy', '--version'], 'clippy '],
-      ['binstall-version', 'cargo', ['binstall', '--version'], lock.versions['cargo-binstall']],
+      ['binstall-version', 'cargo', ['binstall', '-V'], lock.versions['cargo-binstall']],
       ['clean-all-version', 'cargo', ['clean-all', '--version'], lock.versions['cargo-clean-all']],
       ['sccache-version', 'sccache', ['--version'], lock.versions.sccache], ['codegraph-version', 'codegraph', ['--version'], lock.versions.codegraph],
     ];

@@ -145,7 +145,7 @@ async function main() {
   run('rustup-active', 'rustup', ['show', 'active-toolchain']);
   run('rustfmt-version', 'cargo', ['fmt', '--version']);
   run('clippy-version', 'cargo', ['clippy', '--version']);
-  assert.ok(run('binstall-version', 'cargo', ['binstall', '--version']).includes(lock.versions['cargo-binstall']));
+  assert.ok(run('binstall-version', 'cargo', ['binstall', '-V']).includes(lock.versions['cargo-binstall']));
   assert.ok(run('clean-all-version', 'cargo', ['clean-all', '--version']).includes(lock.versions['cargo-clean-all']));
   assert.ok(run('sccache-version', 'sccache', ['--version']).includes(lock.versions.sccache));
   assert.equal(run('codegraph-path', 'sh', ['-c', 'command -v codegraph']), '/opt/bun-global-bin/codegraph');
