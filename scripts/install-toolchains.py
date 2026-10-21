@@ -45,6 +45,22 @@ def install_binary(source, name):
     dest.chmod(0o755)
 
 
+def install_github_cli(spec, work, license_root=Path('/opt/toolchain-licenses')):
+    """Build-only pinned archive install; no authentication or runtime setup."""
+    archive = work / 'gh.tar.gz'
+    download(spec, archive)
+    unpack = work / 'gh'
+    unpack.mkdir()
+    run('tar', '--no-same-owner', '-xzf', str(archive), '--strip-components=1', '-C', str(unpack))
+    binary, license_file = unpack / 'bin/gh', unpack / 'LICENSE'
+    if not binary.is_file() or not license_file.is_file() or not license_file.read_bytes():
+        raise ValueError('Unexpected GitHub CLI archive layout or missing license')
+    install_binary(binary, 'gh')
+    license_dir = license_root / 'gh'
+    license_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(license_file, license_dir / 'LICENSE')
+
+
 def main():
     lock = json.loads(Path(__file__).with_name('toolchains.lock.json').read_text())
     arch = sys.argv[1]
@@ -58,13 +74,14 @@ def main():
     env['PATH'] = '/opt/rust-cargo/bin:/opt/toolchain-bin:' + env['PATH']
     with tempfile.TemporaryDirectory(prefix='toolchains-') as tmp:
         work = Path(tmp)
+        install_github_cli(platform['gh'], work)
         rustup = work / 'rustup-init'
         download(platform['rustup'], rustup)
         rustup.chmod(0o755)
         run(str(rustup), '-y', '--no-modify-path', '--profile', 'minimal',
             '--default-host', platform['rustTarget'], '--default-toolchain', versions['rust'], env=env)
         run('/opt/rust-cargo/bin/rustup', 'component', 'add', 'rustfmt', 'clippy', env=env)
-        # Image toolchains are intentionally immutable at runtime. User cargo installs
+        # Image toolchains are immutable to the default non-root user. User cargo installs
         # and registry caches use the separate persistent CARGO_HOME.
         for name in ('cargo-binstall', 'sccache'):
             archive = work / (name + '.tgz')

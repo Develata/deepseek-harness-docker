@@ -3,7 +3,7 @@ import { networkInterfaces, tmpdir } from 'node:os';
 import { prepareHomes } from './prepare-homes.mjs';
 import { isIP } from 'node:net';
 import { isAbsolute, join } from 'node:path';
-import { accessSync, constants, mkdirSync, mkdtempSync, renameSync, rmdirSync,
+import { accessSync, constants, lstatSync, mkdirSync, mkdtempSync, renameSync, rmdirSync,
   statSync, unlinkSync, writeFileSync } from 'node:fs';
 
 export class PreflightError extends Error {}
@@ -99,6 +99,12 @@ export function checkWritableDirectories(env = process.env, cwd = process.cwd())
     SCCACHE_DIR: '/data/home/.cache/sccache',
   };
   for (const [label, fallback] of Object.entries(defaults)) probeDirectory(label, env[label] ?? fallback);
+  // Only probe explicitly configured paths. Image GH/XDG defaults match their
+  // prior HOME-based defaults; development package paths are separate opt-ins.
+  for (const label of ['XDG_CONFIG_HOME', 'GH_CONFIG_DIR', 'npm_config_prefix', 'npm_config_cache',
+    'BUN_INSTALL_GLOBAL_DIR', 'BUN_INSTALL_BIN']) {
+    if (env[label] !== undefined) probeDirectory(label, env[label]);
+  }
   probeDirectory('Working directory', cwd, { create: false });
   probeDirectory('Temporary directory', env.TMPDIR ?? tmpdir(), { create: false });
 }
@@ -111,6 +117,40 @@ export function checkExecutable(command, env = process.env) {
   fail(`${command.includes('/') ? 'Image executable' : command} is unavailable or not executable. Verify the image and PATH; no runtime download was attempted.`);
 }
 
-export function checkRuntimeIdentity(uid = process.getuid?.()) {
-  if (uid === undefined || uid === 0) fail('Run this image as an unprivileged user (default UID 1000), not root. Prepare mount permissions on the host.');
+export function checkRuntimeIdentity(uid = process.getuid?.(), env = process.env) {
+  const allowRoot = env.DSH_ALLOW_ROOT === undefined ? '0' : env.DSH_ALLOW_ROOT;
+  if (!['0', '1'].includes(allowRoot)) fail('DSH_ALLOW_ROOT must be 0 or 1.');
+  if (!Number.isInteger(uid) || uid < 0) fail('Cannot verify the runtime UID.');
+  if (allowRoot === '1') {
+    if (uid !== 0) fail('DSH_ALLOW_ROOT=1 requires UID 0 and the separate development-root configuration.');
+    return 'root-development';
+  }
+  if (uid === 0) fail('Run as an unprivileged user (default UID 1000). Root requires the separate development-root configuration and explicit DSH_ALLOW_ROOT=1.');
+  return 'non-root';
+}
+
+export const ROOT_DEVELOPMENT_NOTICE =
+  'Development root mode enabled: UID 0 can modify container system files and writable mounts. Image-tool immutability is not provided.';
+
+// Read only the metadata of /data and its two immediate application-home paths.
+// Never traverse user contents, repair ownership, or follow a home symlink.
+// This prevents common accidental reuse of UID1000 homes, not hostile-host races
+// or all mixed ownership below a root-owned directory. Bind selection remains
+// an operator responsibility; the workspace may be an explicitly chosen project.
+export function checkRootDataDirectories(env = process.env, inspect = lstatSync) {
+  const homes = [['HOME', '/data/home'], ['DSH_HOME', '/data/dsh']];
+  for (const [label, expected] of homes) {
+    if ((env[label] ?? expected) !== expected) fail(`Root development requires the dedicated default ${label} location.`);
+  }
+  const directory = (label, path, missingAllowed, rootOwned) => {
+    let info;
+    try { info = inspect(path); } catch (error) {
+      if (missingAllowed && error?.code === 'ENOENT') return;
+      fail(`Cannot inspect ${label} for root development; no ownership or permissions were changed.`);
+    }
+    if (info.isSymbolicLink() || !info.isDirectory()) fail(`${label} must be a real directory for root development, not a symlink.`);
+    if (rootOwned && info.uid !== 0) fail(`${label} already belongs to a non-root user. Use separate root-development data; no ownership or permissions were changed.`);
+  };
+  directory('Data mount', '/data', false, false);
+  for (const [label, path] of homes) directory(label, path, true, true);
 }

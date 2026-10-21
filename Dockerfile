@@ -22,6 +22,7 @@ COPY --from=toolchains /opt/rustup/ /opt/rustup/
 COPY --from=toolchains /opt/bun-global/ /opt/bun-global/
 COPY --from=toolchains /opt/bun-global-bin/ /opt/bun-global-bin/
 ENV DSH_HOME=/data/dsh HOME=/data/home \
+    XDG_CONFIG_HOME=/data/home/.config GH_CONFIG_DIR=/data/home/.config/gh \
     CARGO_HOME=/data/home/.cargo RUSTUP_HOME=/opt/rustup \
     BUN_INSTALL=/data/home/.bun BUN_INSTALL_CACHE_DIR=/data/home/.cache/bun \
     SCCACHE_DIR=/data/home/.cache/sccache SCCACHE_CACHE_SIZE=2G \
@@ -33,6 +34,7 @@ COPY --chown=root:root scripts/entrypoint.mjs scripts/prepare-homes.mjs scripts/
 COPY --chown=root:root scripts/codegraph.cordis.yml /opt/dsh-wrapper/codegraph.cordis.yml
 COPY --chown=root:root scripts/toolchains.lock.json /opt/dsh-wrapper/toolchains.lock.json
 COPY --chown=root:root licenses/ /opt/dsh-wrapper/licenses/
+COPY --from=toolchains /opt/toolchain-licenses/ /opt/dsh-wrapper/licenses/
 USER node
 WORKDIR /workspace
 VOLUME ["/data", "/workspace"]

@@ -1,5 +1,12 @@
 # Toolchain expansion draft
 
+Historical preparation record. The pre-release status statements below describe
+the earlier draft, not the current release. Commit
+`6c7c7001adc88c9b38cd73263729e805a49e6bda` passed ordinary and hardened AMD64
+toolchain/session tests and was published in [run 39561266153](https://github.com/Develata/deepseek-harness-docker/actions/runs/39561266153)
+on 2026-10-21. The separate root-development and GitHub CLI candidate is not covered by that run;
+see [DEVELOPMENT-MODES.md](DEVELOPMENT-MODES.md) for its unexecuted runtime matrix.
+
 Initially prepared 2026-10-20 against `f1035ae9814825c62eb067b71dc43339865b48a3`;
 now rebased as a private increment onto published hotfix `86ee9bdbdb2222edec33f06da01eadbe74bd6279`.
 The toolchain candidate is not committed, published, installed, built, deployed,

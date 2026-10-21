@@ -1,7 +1,7 @@
 // Container-side smoke against a disposable /data and /workspace only.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, accessSync, constants, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { safeDiagnostic, commandFacts, parseDiagnostic, emitDiagnostic } from './self-check.mjs';
@@ -13,7 +13,8 @@ stage('identity');
 
 function run(label, command, args = [], options = {}) {
   stage(label);
-  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60000, ...options });
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60000,
+    ...(command === 'gh' ? { env: { ...process.env, GH_NO_UPDATE_NOTIFIER: '1' } } : {}), ...options });
   diagnostic = safeDiagnostic('tools', label, commandFacts(result, expectations[label]));
   // Preserve only recognized scalar diagnostics across the nested capture boundary.
   if (label === 'self-check' && result.status !== 0) {
@@ -114,6 +115,7 @@ async function discoverMcp() {
 }
 
 async function main() {
+  process.umask(0o077);
   assert.equal(process.getuid(), 1000, 'Must run as UID1000');
   assert.equal(process.arch, 'x64', 'This acceptance suite supports amd64 only');
   const cycle = process.env.DSH_SMOKE_CYCLE;
@@ -129,13 +131,33 @@ async function main() {
   run('self-check', 'node', ['/opt/dsh-wrapper/self-check.mjs']);
   stage('lock-read');
   const lock = JSON.parse(readFileSync('/opt/dsh-wrapper/toolchains.lock.json', 'utf8'));
-  Object.assign(expectations, { 'bun-version': lock.versions.bun, 'python-version': 'Python 3.',
+  Object.assign(expectations, { 'gh-version': `gh version ${lock.versions.gh} `,
+    'bun-version': lock.versions.bun, 'python-version': 'Python 3.',
     'rustc-version': lock.versions.rust, 'cargo-version': 'cargo ', 'rustup-version': lock.versions.rustup,
     'rustfmt-version': 'rustfmt ', 'clippy-version': 'clippy ', 'binstall-version': lock.versions['cargo-binstall'],
     'clean-all-version': lock.versions['cargo-clean-all'], 'sccache-version': lock.versions.sccache,
     'codegraph-version': lock.versions.codegraph, 'codegraph-node': /^v24\./ });
   stage('node-version');
   assert.equal(process.versions.node, lock.versions.node);
+  assert.ok(run('gh-version', 'gh', ['--version']).startsWith(`gh version ${lock.versions.gh} `));
+  // Disposable fixture only: no login, API call, token read or credential helper.
+  stage('gh-config');
+  assert.equal(process.env.XDG_CONFIG_HOME, '/data/home/.config');
+  assert.equal(process.env.GH_CONFIG_DIR, '/data/home/.config/gh');
+  const ghConfig = '/data/home/.config/gh/config.yml';
+  assert.equal(existsSync('/data/home/.config/gh/hosts.yml'), false);
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) {
+    assert.ok(!process.env[name], 'Smoke must not receive account tokens');
+  }
+  if (cycle === '1') {
+    assert.equal(existsSync(ghConfig), false, 'First cycle needs empty GH config');
+    run('gh-config', 'gh', ['config', 'set', 'prompt', 'disabled']);
+  }
+  assert.equal(run('gh-config', 'gh', ['config', 'get', 'prompt']), 'disabled');
+  assert.equal(statSync(ghConfig).mode & 0o777, 0o600);
+  assert.equal(statSync(ghConfig).uid, 1000);
+  assert.equal(statSync('/data/home/.config/gh').mode & 0o777, 0o700);
+  assert.equal(existsSync('/data/home/.config/gh/hosts.yml'), false);
   assert.equal(run('bun-version', 'bun', ['--version']), lock.versions.bun);
   assert.ok(run('python-version', 'python3', ['--version']).startsWith('Python 3.'));
   run('python-venv', 'python3', ['-m', 'venv', '/workspace/python-venv']);
@@ -183,7 +205,7 @@ async function main() {
   assert.equal(run('cargo-persistence', 'cargo', ['persistence-probe']), 'persistent-cargo-bin');
   stage('persistence-write');
   if (cycle === '1') {
-    const saved = { [marker]: readFileSync(marker, 'utf8'),
+    const saved = { [marker]: readFileSync(marker, 'utf8'), [ghConfig]: readFileSync(ghConfig, 'utf8'),
       '/workspace/python-venv/pyvenv.cfg': readFileSync('/workspace/python-venv/pyvenv.cfg', 'utf8') };
     for (const directory of ['/data/home/.cargo/registry', '/data/home/.cache/bun',
       '/data/home/.cache/sccache', '/workspace']) {
@@ -198,7 +220,7 @@ async function main() {
   await discoverMcp();
   stage('mcp-no-index');
   assert.equal(existsSync('/workspace/.codegraph'), false, 'MCP discovery initialized a project unexpectedly');
-  console.log('Toolchain smoke passed: UID1000, pinned tools, Rust compilation, wrapper, persistent Cargo bin and MCP discovery. No model calls.');
+  console.log('Toolchain smoke passed: UID1000, pinned tools, Rust compilation, wrapper, persistent Cargo bin/GH config and MCP discovery. No account login or model calls.');
 }
 main().catch(error => {
   emitDiagnostic({ ...diagnostic, error: diagnostic.error ?? error?.code ?? 'unknown' });

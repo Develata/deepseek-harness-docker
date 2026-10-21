@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, readdirSync, statSync, rmSync, mkdirSync, chmodSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildDshArgs, parseStartup, probeDirectory, checkWritableDirectories, checkRuntimeIdentity, checkExecutable } from '../scripts/runtime-checks.mjs';
+import { buildDshArgs, parseStartup, probeDirectory, checkWritableDirectories, checkRuntimeIdentity, checkRootDataDirectories, checkExecutable, ROOT_DEVELOPMENT_NOTICE } from '../scripts/runtime-checks.mjs';
 
 const interfaces = { lo: [{ family: 'IPv4', internal: true, address: '127.0.0.1' }],
   eth0: [{ family: 'IPv4', internal: false, address: '172.18.0.2' }] };
@@ -74,9 +74,61 @@ test('single interface selection fails closed; explicit concrete interface can d
   assert.equal(parseStartup(['--host=172.19.0.2'], {}, multi).host, '172.19.0.2');
   for (const value of ['0.0.0.0', '::', 'localhost', '192.0.2.1']) assert.throws(() => parse(['--host', value]), /concrete local/);
 });
-test('runtime identity rejects root but never chowns', () => {
-  assert.throws(() => checkRuntimeIdentity(0), /unprivileged/);
-  assert.doesNotThrow(() => checkRuntimeIdentity(1000));
+test('default identity rejects root and preserves other non-root UIDs', () => {
+  for (const env of [{}, { DSH_ALLOW_ROOT: '0' }]) {
+    assert.throws(() => checkRuntimeIdentity(0, env), /unprivileged/);
+    for (const uid of [1, 1000, 1001, 65534]) assert.equal(checkRuntimeIdentity(uid, env), 'non-root');
+  }
+});
+test('root development requires BOTH UID 0 and the exact explicit opt-in', () => {
+  assert.equal(checkRuntimeIdentity(0, { DSH_ALLOW_ROOT: '1' }), 'root-development');
+  for (const uid of [1, 1000, 65534]) {
+    assert.throws(() => checkRuntimeIdentity(uid, { DSH_ALLOW_ROOT: '1' }), /requires UID 0/);
+  }
+  for (const value of ['', 'true', 'false', 'yes', '01', '1 ', '2', null, true, 1, 'secret-value']) {
+    for (const uid of [0, 1000]) assert.throws(() => checkRuntimeIdentity(uid, { DSH_ALLOW_ROOT: value }),
+      error => error.message === 'DSH_ALLOW_ROOT must be 0 or 1.');
+  }
+  for (const uid of [null, -1, NaN, 0.5, '0']) assert.throws(() => checkRuntimeIdentity(uid, {}), /verify/);
+});
+
+const rootDirectory = (uid = 0) => ({ uid, isDirectory: () => true, isSymbolicLink: () => false });
+const missing = () => { throw Object.assign(new Error('sensitive filesystem detail'), { code: 'ENOENT' }); };
+test('root home guard checks only three metadata paths; missing homes are allowed', () => {
+  const paths = [];
+  checkRootDataDirectories({}, path => {
+    paths.push(path);
+    if (path === '/data') return rootDirectory(1000); // Bind parent can belong to the host user.
+    return missing();
+  });
+  assert.deepEqual(paths, ['/data', '/data/home', '/data/dsh']);
+  assert.doesNotThrow(() => checkRootDataDirectories({}, () => rootDirectory()));
+});
+test('root home guard rejects mixed UID, symlinks, non-directories and inspection failures without repair', () => {
+  for (const target of ['/data/home', '/data/dsh']) {
+    assert.throws(() => checkRootDataDirectories({}, path => rootDirectory(path === target ? 1000 : 0)), /non-root user/);
+  }
+  for (const target of ['/data', '/data/home', '/data/dsh']) {
+    for (const bad of [
+      { ...rootDirectory(), isSymbolicLink: () => true },
+      { ...rootDirectory(), isDirectory: () => false },
+    ]) assert.throws(() => checkRootDataDirectories({}, path => path === target ? bad : rootDirectory()), /real directory/);
+    assert.throws(() => checkRootDataDirectories({}, path => {
+      if (path === target) throw Object.assign(new Error('secret-sentinel'), { code: 'EACCES' });
+      return rootDirectory();
+    }), error => /Cannot inspect/.test(error.message) && !error.message.includes('secret-sentinel'));
+  }
+  assert.throws(() => checkRootDataDirectories({}, missing), /Cannot inspect Data mount/);
+});
+test('root home guard rejects custom or ambiguous locations before filesystem access', () => {
+  for (const label of ['HOME', 'DSH_HOME']) for (const value of ['/root', '/data/home/../home', 'relative', '', '/private-secret']) {
+    let inspected = false;
+    assert.throws(() => checkRootDataDirectories({ [label]: value }, () => { inspected = true; return rootDirectory(); }),
+      error => /dedicated default/.test(error.message) && !error.message.includes('private-secret'));
+    assert.equal(inspected, false);
+  }
+  assert.match(ROOT_DEVELOPMENT_NOTICE, /UID 0/);
+  assert.match(ROOT_DEVELOPMENT_NOTICE, /immutability is not provided/);
 });
 test('writability probe preserves existing bytes and permissions and cleans only its own files', () => {
   const root = fixture();
@@ -111,6 +163,27 @@ test('all writable runtime paths are probed using configured absolute paths', ()
     for (const path of Object.values(env)) assert.ok(statSync(path).isDirectory());
   } finally { rmSync(root, { recursive: true }); }
 });
+test('GH/XDG and development package-manager locations are probed only when configured', () => {
+  const root = fixture();
+  try {
+    const labels = ['HOME', 'DSH_HOME', 'CARGO_HOME', 'BUN_INSTALL', 'BUN_INSTALL_CACHE_DIR', 'SCCACHE_DIR',
+      'XDG_CONFIG_HOME', 'GH_CONFIG_DIR', 'npm_config_prefix', 'npm_config_cache', 'BUN_INSTALL_GLOBAL_DIR', 'BUN_INSTALL_BIN'];
+    const env = Object.fromEntries(labels.map((label, index) => [label, join(root, String(index))]));
+    env.TMPDIR = root;
+    checkWritableDirectories(env, root);
+    for (const path of Object.values(env)) assert.ok(statSync(path).isDirectory());
+    const previous = JSON.stringify(env);
+    writeFileSync(join(env.GH_CONFIG_DIR, 'config.yml'), 'prompt: disabled\n', { mode: 0o600 });
+    checkWritableDirectories(env, root);
+    assert.equal(JSON.stringify(env), previous);
+    assert.equal(readFileSync(join(env.GH_CONFIG_DIR, 'config.yml'), 'utf8'), 'prompt: disabled\n');
+    assert.equal(statSync(join(env.GH_CONFIG_DIR, 'config.yml')).mode & 0o777, 0o600);
+    for (const label of ['npm_config_prefix', 'XDG_CONFIG_HOME', 'GH_CONFIG_DIR']) {
+      assert.throws(() => checkWritableDirectories({ ...env, [label]: 'private-secret-relative' }, root),
+        error => error.message === `${label} must be an absolute directory path.`);
+    }
+  } finally { rmSync(root, { recursive: true }); }
+});
 test('executable check does not run or download binaries', () => {
   const root = fixture();
   try {
@@ -141,8 +214,27 @@ test('empty /data bind regression: HOME and DSH_HOME are created non-destructive
 
 // Importing helpers must not run the opt-in image self-check or change umask.
 const umaskBeforeDiagnosticImport = process.umask();
-const { safeDiagnostic, commandFacts, parseDiagnostic, emitDiagnostic, DIAGNOSTIC_STAGES } =
+const { safeDiagnostic, commandFacts, parseDiagnostic, emitDiagnostic, DIAGNOSTIC_STAGES, checkImageToolDirectories } =
   await import('../scripts/self-check.mjs');
+test('non-root self-check still fails when image tools are writable', () => {
+  const api = { realpath: path => path, stat: () => ({ isDirectory: () => true }), access: () => {} };
+  assert.throws(() => checkImageToolDirectories('non-root', api), /read-only/);
+  api.access = (_path, mode) => { if (mode === constants.W_OK) throw Object.assign(new Error(), { code: 'EACCES' }); };
+  assert.doesNotThrow(() => checkImageToolDirectories('non-root', api));
+});
+test('root self-check validates layout without asserting image tools are immutable', () => {
+  const accessModes = [];
+  const api = { realpath: path => path, stat: () => ({ isDirectory: () => true }), access: (_path, mode) => accessModes.push(mode) };
+  checkImageToolDirectories('root-development', api);
+  assert.equal(accessModes.length, 4);
+  assert.ok(accessModes.every(mode => mode === (constants.R_OK | constants.X_OK)));
+  for (const mode of ['non-root', 'root-development']) {
+    assert.throws(() => checkImageToolDirectories(mode, { ...api, realpath: () => '/unexpected' }), /layout/);
+    assert.throws(() => checkImageToolDirectories(mode, { ...api, stat: () => ({ isDirectory: () => false }) }), /directory/);
+  }
+  assert.throws(() => checkImageToolDirectories('unrecognized', api), /Unknown/);
+  assert.ok(safeDiagnostic('self', 'root-tool-layout'));
+});
 test('diagnostic helpers are inert on import and drop arbitrary child data', () => {
   assert.equal(process.umask(), umaskBeforeDiagnosticImport);
   const secret = 'sensitive-sentinel-not-for-logs';

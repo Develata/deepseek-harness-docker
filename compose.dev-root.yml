@@ -1,0 +1,60 @@
+# Root-development candidate: container compatibility is NOT yet validated.
+# Requires an approved NEW image; release 6c7c700 rejects UID 0.
+# Standalone file: never merge with compose.yml or compose.hardened.yml.
+name: dsh-dev-root
+
+services:
+  dsh:
+    image: ${DSH_DEV_IMAGE:?Set an approved root-opt-in image tag or digest}
+    platform: linux/amd64
+    user: "0:0"
+    init: true
+    restart: "no"
+    read_only: false
+    privileged: false
+    # No cap_drop ALL and no cap_add: retain Docker's limited default set.
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    working_dir: /workspace
+    ports:
+      - "127.0.0.1:3081:3080"
+    environment:
+      DSH_ALLOW_ROOT: "1"
+      DSH_HOME: /data/dsh
+      HOME: /data/home
+      XDG_CONFIG_HOME: /data/home/.config
+      GH_CONFIG_DIR: /data/home/.config/gh
+      CARGO_HOME: /data/home/.cargo
+      RUSTUP_HOME: /opt/rustup
+      BUN_INSTALL: /data/home/.bun
+      BUN_INSTALL_CACHE_DIR: /data/home/.cache/bun
+      BUN_INSTALL_GLOBAL_DIR: /data/home/.bun/install/global
+      BUN_INSTALL_BIN: /data/home/.bun/bin
+      SCCACHE_DIR: /data/home/.cache/sccache
+      SCCACHE_CACHE_SIZE: 2G
+      npm_config_prefix: /data/home/.local/npm
+      npm_config_cache: /data/home/.cache/npm
+      DSH_CODEGRAPH_MCP: "1"
+      CODEGRAPH_TELEMETRY: "0"
+      CODEGRAPH_NO_DOWNLOAD: "1"
+      BINSTALL_DISABLE_TELEMETRY: "true"
+      PATH: /opt/bun-global-bin:/opt/toolchain-bin:/opt/rust-cargo/bin:/data/home/.cargo/bin:/data/home/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/data/home/.local/npm/bin
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=1g,mode=1777
+    volumes:
+      - type: bind
+        source: ./data-root-dev
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./workspace-root-dev
+        target: /workspace
+        bind:
+          create_host_path: false
+    command:
+      - --public-url
+      - http://127.0.0.1:3081/
+      - --trusted-host
+      - 127.0.0.1:3081

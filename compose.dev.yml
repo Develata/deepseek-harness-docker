@@ -1,0 +1,13 @@
+# Optional non-root development override.
+# Use only with compose.yml, not with compose.hardened.yml.
+services:
+  dsh:
+    read_only: false
+    environment:
+      npm_config_prefix: /data/home/.local/npm
+      npm_config_cache: /data/home/.cache/npm
+      BUN_INSTALL_GLOBAL_DIR: /data/home/.bun/install/global
+      BUN_INSTALL_BIN: /data/home/.bun/bin
+      PATH: /opt/bun-global-bin:/opt/toolchain-bin:/opt/rust-cargo/bin:/data/home/.cargo/bin:/data/home/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/data/home/.local/npm/bin
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=1g,mode=1777

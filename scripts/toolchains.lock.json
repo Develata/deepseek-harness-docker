@@ -8,7 +8,8 @@
     "cargo-binstall": "1.26.0",
     "sccache": "0.18.0",
     "cargo-clean-all": "0.6.5",
-    "codegraph": "1.6.2"
+    "codegraph": "1.6.2",
+    "gh": "2.102.1"
   },
   "codegraph": {
     "url": "https://registry.npmjs.org/@colbymchenry/codegraph/-/codegraph-1.6.2.tgz",
@@ -41,6 +42,10 @@
       "codegraph": {
         "url": "https://registry.npmjs.org/@colbymchenry/codegraph-linux-x64/-/codegraph-linux-x64-1.6.2.tgz",
         "integrity": "sha512-DJWizz1qHNr1MsbK6fz1mjVUQjeTH3T+L0D2BGaLkygWzBnNMG30MvLq1ae0m6cUV414U8aEow5Eb/kIORA8+w=="
+      },
+      "gh": {
+        "url": "https://github.com/cli/cli/releases/download/v2.102.1/gh_2.102.1_linux_amd64.tar.gz",
+        "sha256": "77b9e297e94c50336823d0f84de7ef1be60cba704601fa0d98f129f47a94987b"
       }
     },
     "arm64": {
@@ -65,7 +70,12 @@
       "codegraph": {
         "url": "https://registry.npmjs.org/@colbymchenry/codegraph-linux-arm64/-/codegraph-linux-arm64-1.6.2.tgz",
         "integrity": "sha512-4sUICiYzHgC3brCKw4FDiY10jVQ79oIm2wwE978IOAXj36sDxji6d9l5SEvGyHyolgSXsLImLtagTsIEN2Pvnw=="
+      },
+      "gh": {
+        "url": "https://github.com/cli/cli/releases/download/v2.102.1/gh_2.102.1_linux_arm64.tar.gz",
+        "sha256": "5019b3cc6e8a03bb4d88600f8dbda2add8e6407705c159b0c63151036e77a1af"
       }
     }
-  }
+  },
+  "githubCliVerifiedAt": "2026-10-21"
 }

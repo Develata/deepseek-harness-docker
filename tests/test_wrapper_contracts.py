@@ -61,6 +61,53 @@ class WrapperContracts(unittest.TestCase):
         self.assertIn('no-new-privileges:true', base)
         self.assertIn('user: "1000:1000"', base)
 
+    def test_root_development_is_standalone_and_bounded(self):
+        text = (ROOT / 'compose.dev-root.yml').read_text()
+        active = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
+        self.assertIn('name: dsh-dev-root', active)
+        self.assertIn('user: "0:0"', active)
+        self.assertIn('DSH_ALLOW_ROOT: "1"', active)
+        self.assertIn('${DSH_DEV_IMAGE:?', active)
+        self.assertIn('read_only: false', active)
+        self.assertIn('privileged: false', active)
+        self.assertIn('restart: "no"', active)
+        self.assertIn('no-new-privileges:true', active)
+        self.assertIn('/tmp:rw,exec,nosuid,nodev,size=1g,mode=1777', active)
+        self.assertIn('127.0.0.1:3081:3080', active)
+        self.assertIn('http://127.0.0.1:3081/', active)
+        self.assertEqual(active.count('type: bind'), 2)
+        self.assertEqual(active.count('create_host_path: false'), 2)
+        self.assertIn('source: ./data-root-dev', active)
+        self.assertIn('source: ./workspace-root-dev', active)
+        self.assertNotRegex(active, r'(?m)^volumes:')
+        self.assertNotRegex(active, r'(?m)^\s*(cap_add|cap_drop|pid|ipc|network_mode|devices|device_cgroup_rules|userns_mode|use_api_socket|entrypoint|extends|build|secrets|env_file):')
+        for forbidden in ['docker.sock', 'unconfined', 'host-gateway', 'NARB_DISABLE_NATIVE_CACHE', '0.0.0.0:', 'type: volume']:
+            self.assertNotIn(forbidden, active)
+
+    def test_nonroot_development_keeps_identity_and_image_unchanged(self):
+        text = (ROOT / 'compose.dev.yml').read_text()
+        active = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
+        self.assertNotRegex(active, r'(?m)^\s*(user|image|entrypoint|cap_add|cap_drop|security_opt|volumes|ports):')
+        self.assertNotIn('DSH_ALLOW_ROOT', active)
+        self.assertIn('/tmp:rw,exec,nosuid,nodev,size=1g,mode=1777', active)
+        for key in ['npm_config_prefix', 'npm_config_cache', 'BUN_INSTALL_GLOBAL_DIR', 'BUN_INSTALL_BIN']:
+            self.assertRegex(active, rf'{key}: /data/home/')
+        self.assertNotIn('${PATH}', active)
+
+    def test_root_guard_runs_before_home_creation_and_cannot_repair_permissions(self):
+        for name in ['entrypoint.mjs', 'self-check.mjs']:
+            source = (ROOT / 'scripts' / name).read_text()
+            self.assertLess(source.index('const mode = checkRuntimeIdentity();'), source.index('checkRootDataDirectories();'))
+            self.assertLess(source.index('checkRootDataDirectories();'), source.index('checkWritableDirectories();'))
+        preflight = (ROOT / 'scripts/runtime-checks.mjs').read_text()
+        self.assertIn('inspect = lstatSync', preflight)
+        self.assertNotRegex(preflight, r'\b(chownSync|chmodSync|execSync|readdirSync)\(')
+
+    def test_development_data_is_not_in_build_context(self):
+        for path in ['data-root-dev/dsh/.credentials.yaml', 'workspace-root-dev/private.txt',
+                     'compose.dev.yml', 'compose.dev-root.yml']:
+            self.assertFalse(build_context_includes(path), path)
+
     def test_integrity_lock_and_python_sources_parse(self):
         lock = json.loads((ROOT / 'scripts/toolchains.lock.json').read_text())
         self.assertEqual(lock['versions']['node'], '26.12.0')

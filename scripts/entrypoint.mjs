@@ -1,11 +1,15 @@
 import { spawn } from 'node:child_process';
-import { buildDshArgs, checkExecutable, checkRuntimeIdentity, checkWritableDirectories, parseStartup, PreflightError } from './runtime-checks.mjs';
+import { buildDshArgs, checkExecutable, checkRootDataDirectories, checkRuntimeIdentity, checkWritableDirectories, parseStartup, PreflightError, ROOT_DEVELOPMENT_NOTICE } from './runtime-checks.mjs';
 
 process.umask(0o077);
 try {
   const args = process.argv.slice(2);
   const startup = parseStartup(args);
-  checkRuntimeIdentity();
+  const mode = checkRuntimeIdentity();
+  if (mode === 'root-development') {
+    checkRootDataDirectories();
+    console.error(ROOT_DEVELOPMENT_NOTICE);
+  }
   checkWritableDirectories();
   checkExecutable('dsh');
   if (startup.mcpEnabled) checkExecutable('/opt/bun-global-bin/codegraph');

@@ -1,5 +1,12 @@
 # Deployment diagnostics and session-integration candidate
 
+Historical preparation record. The pre-release status statements below describe
+the earlier draft, not the current release. Commit
+`6c7c7001adc88c9b38cd73263729e805a49e6bda` passed ordinary and hardened AMD64
+toolchain/session tests, native authentication and publication in [run 39561266153](https://github.com/Develata/deepseek-harness-docker/actions/runs/39561266153)
+on 2026-10-21. No new development-mode runtime test or deployment is claimed;
+see [DEVELOPMENT-MODES.md](DEVELOPMENT-MODES.md) for the new candidate.
+
 Rebased 2026-10-20 onto published commit `86ee9bdbdb2222edec33f06da01eadbe74bd6279`.
 The private increment remains uncommitted, unpublished and untested in a container.
 AMD64 only; no ARM work was added. The original toolchain draft is preserved.

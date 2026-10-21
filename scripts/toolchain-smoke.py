@@ -26,8 +26,8 @@ DIAGNOSTIC_STAGES = {
     ).split()),
     'self': set((
         'binstall-version bun-version cargo-version clean-all-version clippy-version '
-        'codegraph-launcher codegraph-version dsh-executable immutable-tools lock-read node-version '
-        'preflight python-version rustc-version rustfmt-version rustup-version sccache-version'
+        'codegraph-launcher codegraph-version dsh-executable gh-version immutable-tools lock-read node-version '
+        'preflight python-version root-tool-layout rustc-version rustfmt-version rustup-version sccache-version'
     ).split()),
     'session': set((
         'agent create flush loader rename title tools'
@@ -37,7 +37,7 @@ DIAGNOSTIC_STAGES = {
     ).split()),
     'tools': set((
         'binstall-version bun-version cargo-persistence cargo-version clean-all-version '
-        'clippy-version codegraph-launcher codegraph-node codegraph-path codegraph-version identity '
+        'clippy-version codegraph-launcher codegraph-node codegraph-path codegraph-version gh-config gh-version identity '
         'lock-read mcp-initialize mcp-no-index mcp-shutdown mcp-spawn mcp-tools node-version '
         'persistence-read persistence-write python-venv python-version rust-build rust-build-sccache '
         'rust-execute rust-fixture rust-layout rustc-version rustfmt-version rustup-active '
